@@ -5,7 +5,7 @@ PYINCDIR = $(PYBASE)/include/python$(PYVERSION)
 PYINCLUDE = -I$(PYINCDIR)
 
 CXX = g++
-CXXFLAGS = -fPIC -fno-common $(INCLUDE)
+CXXFLAGS = -fPIC -fno-common -g -O3 $(INCLUDE)
 INCLUDE = $(PYINCLUDE)
 LDFLAGS = -lboost_python -lcityhash
 
@@ -13,9 +13,12 @@ SRCS = $(wildcard *.cpp)
 OBJS = $(SRCS:.cpp=.o)
 SOBJS = $(SRCS:.cpp=.so)
 
-.PHONY: all clean
+.PHONY: all clean check
 
 all: $(SOBJS)
+
+check: $(SOBJS)
+	nosetests
 
 clean:
 	@rm -fv $(OBJS) $(SOBJS)
