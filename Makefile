@@ -7,7 +7,7 @@ PYINCLUDE = -I$(PYINCDIR)
 CXX = g++
 CXXFLAGS = -fPIC -fno-common $(INCLUDE)
 INCLUDE = $(PYINCLUDE)
-LDFLAGS = -lboost_python
+LDFLAGS = -lboost_python -lcityhash
 
 SRCS = $(wildcard *.cpp)
 OBJS = $(SRCS:.cpp=.o)

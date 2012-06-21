@@ -2,6 +2,7 @@
 #include <limits>
 #include <sparsehash/dense_hash_map>
 #include <boost/python.hpp>
+#include <city.h>
 
 namespace bp = boost::python;
 namespace gg = google;
@@ -53,8 +54,14 @@ struct EmptyString {
     std::string operator()() const { return "asdOFiaqjsdfBazxcvf"; }
 };
 
+struct CityHashFcn {
+    size_t operator()(const std::string &str) const {
+        return CityHash64(str.c_str(), str.size());
+    }
+};
+
 typedef pyhashmap<long, MaxKey<long> > pyhashmap_int;
-typedef pyhashmap<std::string, EmptyString> pyhashmap_str;
+typedef pyhashmap<std::string, EmptyString, CityHashFcn> pyhashmap_str;
 
 template<class PHM>
 void create_wrapper(const char* classname)
