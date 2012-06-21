@@ -9,13 +9,13 @@ namespace gg = google;
 
 template <
     class Key,
-    class EmptyKey,
+    class SpecialKeys,
     class HashFcn=std::tr1::hash<Key>,
-    class EqualKey=std::equal_to<Key> >
+    class EqualFcn=std::equal_to<Key> >
 class pyhashmap
 {
   private:
-    typedef gg::dense_hash_map<Key, bp::object, HashFcn, EqualKey> map_type;
+    typedef gg::dense_hash_map<Key, bp::object, HashFcn, EqualFcn> map_type;
     map_type map;
 
   public:
@@ -24,7 +24,10 @@ class pyhashmap
     typedef typename map_type::value_type value_type;
     typedef typename map_type::iterator iterator;
 
-    pyhashmap(size_type n=0) : map(n) { map.set_empty_key(EmptyKey()()); }
+    pyhashmap(size_type n=0) : map(n) {
+        map.set_empty_key(SpecialKeys::Empty());
+        map.set_deleted_key(SpecialKeys::Erase());
+    }
 
     bp::object getitem(const key_type& k)
     {
@@ -35,6 +38,17 @@ class pyhashmap
         throw bp::error_already_set();
     }
 
+    bp::object delitem(const key_type& k)
+    {
+        iterator it = map.find(k);
+        if (it != map.end())
+            map.erase(it);
+        else {
+            PyErr_SetNone(PyExc_KeyError);
+            throw bp::error_already_set();
+        }
+    }
+
     void setitem(const key_type& k, const bp::object& v)
     {
         iterator it = map.find(k);
@@ -43,15 +57,25 @@ class pyhashmap
         else
             map.insert(value_type(k, v));
     }
+
+    size_type len() {
+        return map.size();
+    }
+
+    bool contains(const key_type &k) {
+        return map.find(k) != map.end();
+    }
 };
 
 template<typename T>
-struct MaxKey {
-    T operator()() const { return std::numeric_limits<T>::max(); }
+struct IntKeys {
+    static T Empty() { return std::numeric_limits<T>::max(); }
+    static T Erase() { return std::numeric_limits<T>::max() - 1; }
 };
 
-struct EmptyString {
-    std::string operator()() const { return "asdOFiaqjsdfBazxcvf"; }
+struct StringKeys {
+    static std::string Empty() { return "asdOFiaqjsdfBazxcvf"; }
+    static std::string Erase() { return "8asflakjbl;sdfDSslf"; }
 };
 
 struct CityHashFcn {
@@ -60,15 +84,18 @@ struct CityHashFcn {
     }
 };
 
-typedef pyhashmap<long, MaxKey<long> > pyhashmap_int;
-typedef pyhashmap<std::string, EmptyString, CityHashFcn> pyhashmap_str;
+typedef pyhashmap<long, IntKeys<long> > pyhashmap_int;
+typedef pyhashmap<std::string, StringKeys, CityHashFcn> pyhashmap_str;
 
 template<class PHM>
 void create_wrapper(const char* classname)
 {
     bp::class_<PHM>(classname, bp::no_init)
         .def(bp::init<bp::optional<typename PHM::size_type> >())
+        .def("__len__", &PHM::len)
+        .def("__contains__", &PHM::contains)
         .def("__getitem__", &PHM::getitem)
+        .def("__delitem__", &PHM::delitem)
         .def("__setitem__", &PHM::setitem);
 }
 
