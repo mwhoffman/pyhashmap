@@ -2,6 +2,7 @@
 #include <limits>
 #include <sparsehash/dense_hash_map>
 #include <boost/python.hpp>
+#include <boost/iterator/transform_iterator.hpp>
 #include <city.h>
 
 namespace bp = boost::python;
@@ -21,13 +22,26 @@ class pyhashmap
   public:
     typedef typename map_type::size_type size_type;
     typedef typename map_type::key_type key_type;
+    typedef typename map_type::data_type data_type;
     typedef typename map_type::value_type value_type;
     typedef typename map_type::iterator iterator;
 
+  private:
+    struct select_key
+        : std::unary_function<const value_type&, const key_type&>
+    {
+        const key_type& operator()(const value_type& p) const { return p.first; }
+    };  
+
+  public:
     pyhashmap(size_type n=0) : map(n) {
         map.set_empty_key(SpecialKeys::Empty());
         map.set_deleted_key(SpecialKeys::Erase());
     }
+
+    typedef typename boost::transform_iterator<select_key, iterator> key_iterator;
+    key_iterator begin_key() { return boost::make_transform_iterator(map.begin(), select_key()); }
+    key_iterator end_key() { return boost::make_transform_iterator(map.end(), select_key()); }
 
     bp::object getitem(const key_type& k)
     {
@@ -38,7 +52,7 @@ class pyhashmap
         throw bp::error_already_set();
     }
 
-    bp::object delitem(const key_type& k)
+    void delitem(const key_type& k)
     {
         iterator it = map.find(k);
         if (it != map.end())
@@ -96,7 +110,9 @@ void create_wrapper(const char* classname)
         .def("__contains__", &PHM::contains)
         .def("__getitem__", &PHM::getitem)
         .def("__delitem__", &PHM::delitem)
-        .def("__setitem__", &PHM::setitem);
+        .def("__setitem__", &PHM::setitem)
+        .def("__iter__", bp::range(&PHM::begin_key, &PHM::end_key))
+        ;
 }
 
 BOOST_PYTHON_MODULE(pyhashmap)
