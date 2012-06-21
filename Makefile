@@ -4,7 +4,7 @@ PYSITE = $(PYBASE)/lib/python$(PYVERSION)/site-packages
 PYINCDIR = $(PYBASE)/include/python$(PYVERSION)
 PYINCLUDE = -I$(PYINCDIR)
 
-CXX = clang++
+CXX = g++
 CXXFLAGS = -fPIC -fno-common $(INCLUDE)
 INCLUDE = $(PYINCLUDE)
 LDFLAGS = -lboost_python

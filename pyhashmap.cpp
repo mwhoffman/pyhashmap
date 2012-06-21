@@ -1,56 +1,76 @@
 #include <functional>
-#include <boost/integer_traits.hpp>
-#include <boost/python.hpp>
+#include <limits>
 #include <sparsehash/dense_hash_map>
+#include <boost/python.hpp>
 
 namespace bp = boost::python;
 namespace gg = google;
 
-template <class Key, class Val,
-          Key Empty=boost::integer_traits<Key>::const_max,
-          class HashFcn=std::tr1::hash<Key>,
-          class EqualKey=std::equal_to<Key> >
-class hashmap
-    : public gg::dense_hash_map<Key, Val, HashFcn, EqualKey>
+template <
+    class Key,
+    class EmptyKey,
+    class HashFcn=std::tr1::hash<Key>,
+    class EqualKey=std::equal_to<Key> >
+class pyhashmap
 {
   private:
-    typedef gg::dense_hash_map<Key, Val, HashFcn, EqualKey> super;
+    typedef gg::dense_hash_map<Key, bp::object, HashFcn, EqualKey> map_type;
+    map_type map;
 
   public:
-    hashmap(typename super::size_type n=0) : super(n) { this->set_empty_key(Empty); }
-};
+    typedef typename map_type::size_type size_type;
+    typedef typename map_type::key_type key_type;
+    typedef typename map_type::value_type value_type;
+    typedef typename map_type::iterator iterator;
 
-typedef hashmap<long, long> hashmap_int;
+    pyhashmap(size_type n=0) : map(n) { map.set_empty_key(EmptyKey()()); }
 
-template<typename T>
-struct map_adaptor
-{
-    typedef typename T::key_type key_type;
-    typedef typename T::data_type data_type;
-    typedef typename T::value_type value_type;
-    typedef typename T::iterator iterator;
-
-    static data_type& get(T& self, const key_type& k)
+    bp::object getitem(const key_type& k)
     {
-        iterator it = self.find(k);
-        if (it != self.end()) return it->second;
+        iterator it = map.find(k);
+        if (it != map.end())
+            return it->second;
         PyErr_SetNone(PyExc_KeyError);
         throw bp::error_already_set();
     }
 
-    static void set(T& self, const key_type& k, const data_type& d)
+    void setitem(const key_type& k, const bp::object& v)
     {
-        self.insert(value_type(k,d));
+        iterator it = map.find(k);
+        if (it != map.end())
+            it->second = v;
+        else
+            map.insert(value_type(k, v));
     }
 };
+
+template<typename T>
+struct MaxKey {
+    T operator()() const { return std::numeric_limits<T>::max(); }
+};
+
+struct EmptyString {
+    std::string operator()() const { return "asdOFiaqjsdfBazxcvf"; }
+};
+
+typedef pyhashmap<long, MaxKey<long> > pyhashmap_int;
+typedef pyhashmap<std::string, EmptyString> pyhashmap_str;
+
+template<class PHM>
+void create_wrapper(const char* classname)
+{
+    bp::class_<PHM>(classname, bp::no_init)
+        .def(bp::init<bp::optional<typename PHM::size_type> >())
+        .def("__getitem__", &PHM::getitem)
+        .def("__setitem__", &PHM::setitem);
+}
 
 BOOST_PYTHON_MODULE(pyhashmap)
 {
     // make the bp automatic docstrings slightly less stupid.
     bp::docstring_options doc(true, false);
 
-    bp::class_<hashmap_int>("hashmap", bp::no_init)
-        .def(bp::init<bp::optional<hashmap_int::size_type> >())
-        .def("__getitem__", &map_adaptor<hashmap_int>::get, bp::return_value_policy<bp::copy_non_const_reference>())
-        .def("__setitem__", &map_adaptor<hashmap_int>::set, bp::with_custodian_and_ward<1,3>());
+    create_wrapper<pyhashmap_int>("hashmap_int");
+    create_wrapper<pyhashmap_str>("hashmap_str");
 }
+
