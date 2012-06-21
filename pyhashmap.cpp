@@ -1,12 +1,19 @@
 #include <functional>
-#include <limits>
 #include <sparsehash/dense_hash_map>
+#include <sparsehash/sparsetable>
 #include <boost/python.hpp>
 #include <boost/iterator/transform_iterator.hpp>
 #include <city.h>
 
 namespace bp = boost::python;
 namespace gg = google;
+
+//==============================================================================
+// pyhashmap
+// Hashmap class which wraps google's dense_hash_map implementation, meaning its
+// really fast. Without any arguments this uses the standard hash function for
+// the given Key type, but for strings we should probably use something like
+// CityHash.
 
 template <
     class Key,
@@ -39,12 +46,16 @@ class pyhashmap
         map.set_deleted_key(SpecialKeys::Erase());
     }
 
+    // iterator which only looks at keys.
     typedef typename boost::transform_iterator<select_key, iterator> key_iterator;
-    key_iterator begin_key() { return boost::make_transform_iterator(map.begin(), select_key()); }
-    key_iterator end_key() { return boost::make_transform_iterator(map.end(), select_key()); }
 
-    bp::object getitem(const key_type& k)
-    {
+    // simple iterator access, length, and containment.
+    inline key_iterator begin() { return boost::make_transform_iterator(map.begin(), select_key()); }
+    inline key_iterator end() { return boost::make_transform_iterator(map.end(), select_key()); }
+    inline size_type len() { return map.size(); }
+    inline bool contains(const key_type &k) { return map.find(k) != map.end(); }
+
+    bp::object getitem(const key_type& k) {
         iterator it = map.find(k);
         if (it != map.end())
             return it->second;
@@ -52,8 +63,7 @@ class pyhashmap
         throw bp::error_already_set();
     }
 
-    void delitem(const key_type& k)
-    {
+    void delitem(const key_type& k) {
         iterator it = map.find(k);
         if (it != map.end())
             map.erase(it);
@@ -63,56 +73,110 @@ class pyhashmap
         }
     }
 
-    void setitem(const key_type& k, const bp::object& v)
-    {
+    void setitem(const key_type& k, const bp::object& v) {
         iterator it = map.find(k);
         if (it != map.end())
             it->second = v;
         else
             map.insert(value_type(k, v));
     }
+};
 
-    size_type len() {
-        return map.size();
+//==============================================================================
+// pysparsetable
+// Wrapper around sparsetable, which is essentially an array, but has better
+// memory properties and acts like a "hash" map, but for ints.
+
+// NOTE: currently I'm not dealing with any possible negative indices. So now
+// the question is, should I? And I think I shouldn't, since this object is
+// really acting more like a dict than an array.
+
+class pysparsetable
+{
+  private:
+    typedef gg::sparsetable<bp::object> table_type;
+    table_type table;
+
+  public:
+    typedef table_type::size_type size_type;
+    typedef table_type::value_type value_type;
+    typedef table_type::iterator iterator;
+    typedef table_type::nonempty_iterator nonempty_iterator;
+
+    pysparsetable(size_type n) : table(n) {}
+
+    // iterators over the values.
+    inline nonempty_iterator begin_values() { return table.nonempty_begin(); }
+    inline nonempty_iterator end_values() { return table.nonempty_end(); }
+
+    inline size_type len() { return table.num_nonempty(); }
+    inline bool contains(size_type i) { return table.test(i); }
+
+    bp::object getitem(size_type i) {
+        if (table.test(i))
+            return table[i];
+        PyErr_SetNone(PyExc_KeyError);
+        throw bp::error_already_set();
     }
 
-    bool contains(const key_type &k) {
-        return map.find(k) != map.end();
+    void delitem(size_type i) {
+        if (table.test(i))
+            table.erase(i);
+        else {
+            PyErr_SetNone(PyExc_KeyError);
+            throw bp::error_already_set();
+        }
+    }
+
+    void setitem(size_type i, const bp::object& v) {
+        // we don't have to worry about checking since we'll overwrite it
+        // whatever is there anyways, and the destructor of the previously
+        // existing object will take care of decrementing the refcount.
+        table[i] = v;
     }
 };
 
-template<typename T>
-struct IntKeys {
-    static T Empty() { return std::numeric_limits<T>::max(); }
-    static T Erase() { return std::numeric_limits<T>::max() - 1; }
-};
+//==============================================================================
+// Specific functors to use for std::string's. StringKeys defines which keys to
+// use for marking empty and erased components within the hash implementation.
+// For strings we can also use the CityHash64 hash functions. These aren't
+// really cryptographically secure, but they're super fast and give good
+// coverage of the hashed space. The 64-bit version plays nicely with our 64-bit
+// machine.
 
 struct StringKeys {
     static std::string Empty() { return "asdOFiaqjsdfBazxcvf"; }
     static std::string Erase() { return "8asflakjbl;sdfDSslf"; }
 };
 
+// For strings the CityHash method is really fast and it gives better uniform
+// coverage of the hashed space.
 struct CityHashFcn {
     size_t operator()(const std::string &str) const {
         return CityHash64(str.c_str(), str.size());
     }
 };
 
-typedef pyhashmap<long, IntKeys<long> > pyhashmap_int;
-typedef pyhashmap<std::string, StringKeys, CityHashFcn> pyhashmap_str;
+//==============================================================================
+// create the python wrappers.
 
-template<class PHM>
-void create_wrapper(const char* classname)
+template<class C>
+bp::class_<C> create_container_wrapper(const char* classname)
 {
-    bp::class_<PHM>(classname, bp::no_init)
-        .def(bp::init<bp::optional<typename PHM::size_type> >())
-        .def("__len__", &PHM::len)
-        .def("__contains__", &PHM::contains)
-        .def("__getitem__", &PHM::getitem)
-        .def("__delitem__", &PHM::delitem)
-        .def("__setitem__", &PHM::setitem)
-        .def("__iter__", bp::range(&PHM::begin_key, &PHM::end_key))
-        ;
+    return bp::class_<C>(classname, bp::no_init)
+        .def(bp::init<typename C::size_type >())
+        .def("__len__", &C::len)
+        .def("__contains__", &C::contains)
+        .def("__getitem__", &C::getitem)
+        .def("__delitem__", &C::delitem)
+        .def("__setitem__", &C::setitem);
+}
+
+template<class C>
+bp::class_<C> create_map_wrapper(const char* classname)
+{
+    return create_container_wrapper<C>(classname)
+        .def("__iter__", bp::range(&C::begin, &C::end));
 }
 
 BOOST_PYTHON_MODULE(pyhashmap)
@@ -120,7 +184,9 @@ BOOST_PYTHON_MODULE(pyhashmap)
     // make the bp automatic docstrings slightly less stupid.
     bp::docstring_options doc(true, false);
 
-    create_wrapper<pyhashmap_int>("hashmap_int");
-    create_wrapper<pyhashmap_str>("hashmap_str");
+    create_map_wrapper<pyhashmap<std::string, StringKeys, CityHashFcn> >("hashmap");
+
+    create_container_wrapper<pysparsetable>("sparsetable")
+        .def("itervalues", bp::range(&pysparsetable::begin_values, &pysparsetable::end_values));
 }
 
