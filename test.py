@@ -1,5 +1,6 @@
 import pyhashmap
 
+
 def test_pyhashmap():
     mymap = pyhashmap.hashmap(500000)
     mymap['asdf'] = 123
@@ -9,4 +10,3 @@ def test_pyhashmap():
     mymap['2134']['asdf'] = 1
     a = mymap['2134']
     assert a['asdf'] == 1
-

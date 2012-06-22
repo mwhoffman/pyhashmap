@@ -1,4 +1,5 @@
 #include <functional>
+#include <string>
 #include <sparsehash/dense_hash_map>
 #include <sparsehash/sparsetable>
 #include <boost/python.hpp>
