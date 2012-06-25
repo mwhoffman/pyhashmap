@@ -10,6 +10,37 @@ namespace bp = boost::python;
 namespace gg = google;
 
 //==============================================================================
+// pair_selector
+// A little helper type which defines functors to select the first and second
+// elements from a pair. So given a type T which has the same semantics as the
+// std::pair type, pair_selector<T>::first is a functor to select the first
+// element (and vice-versa for ::second).
+
+template<typename T>
+struct pair_selector
+{
+    typedef T pair_type;
+    typedef typename pair_type::first_type first_type;
+    typedef typename pair_type::second_type second_type;
+
+    // functor to select the first item.
+    struct first: std::unary_function<const pair_type&, const first_type&>
+    {
+        const first_type& operator()(const pair_type& p) const {
+            return p.first;
+        }
+    };
+
+    // functor to select the second item.
+    struct second : std::unary_function<const pair_type&, const second_type&>
+    {
+        const second_type& operator()(const pair_type& p) const {
+            return p.second;
+        }
+    };
+};
+
+//==============================================================================
 // pyhashmap
 // Hashmap class which wraps google's dense_hash_map implementation, meaning its
 // really fast. Without any arguments this uses the standard hash function for
@@ -35,11 +66,8 @@ class pyhashmap
     typedef typename map_type::iterator iterator;
 
   private:
-    struct select_key
-        : std::unary_function<const value_type&, const key_type&>
-    {
-        const key_type& operator()(const value_type& p) const { return p.first; }
-    };  
+    typedef typename pair_selector<value_type>::first select_key;
+    typedef typename pair_selector<value_type>::second select_val;
 
   public:
     pyhashmap(size_type n=0) : map(n) {
@@ -47,14 +75,35 @@ class pyhashmap
         map.set_deleted_key(SpecialKeys::Erase());
     }
 
-    // iterator which only looks at keys.
+    // transform iterators to get keys, data, etc.
     typedef typename boost::transform_iterator<select_key, iterator> key_iterator;
+    typedef typename boost::transform_iterator<select_val, iterator> val_iterator;
 
-    // simple iterator access, length, and containment.
-    inline key_iterator begin() { return boost::make_transform_iterator(map.begin(), select_key()); }
-    inline key_iterator end() { return boost::make_transform_iterator(map.end(), select_key()); }
-    inline size_type len() { return map.size(); }
-    inline bool contains(const key_type &k) { return map.find(k) != map.end(); }
+    // iterator over the keys.
+    inline key_iterator begin() {
+        return boost::make_transform_iterator(map.begin(), select_key());
+    }
+
+    inline key_iterator end() {
+        return boost::make_transform_iterator(map.end(), select_key());
+    }
+
+    // iterator over the data.
+    inline val_iterator begin_values() {
+        return boost::make_transform_iterator(map.begin(), select_val());
+    }
+    
+    inline val_iterator end_values() {
+        return boost::make_transform_iterator(map.end(), select_val());
+    }
+
+    inline size_type len() const {
+        return map.size();
+    }
+    
+    inline bool contains(const key_type &k) const {
+        return map.find(k) != map.end();
+    }
 
     bp::object getitem(const key_type& k) {
         iterator it = map.find(k);
@@ -138,23 +187,41 @@ class pysparsetable
 };
 
 //==============================================================================
-// Specific functors to use for std::string's. StringKeys defines which keys to
-// use for marking empty and erased components within the hash implementation.
-// For strings we can also use the CityHash64 hash functions. These aren't
-// really cryptographically secure, but they're super fast and give good
-// coverage of the hashed space. The 64-bit version plays nicely with our 64-bit
-// machine.
+// Specific functors to use for different types.
 
+// Keys to use for marking empty and erased components on strings. These were
+// just chosen randomly, but I should probably make them something more
+// reasonable.
 struct StringKeys {
     static std::string Empty() { return "asdOFiaqjsdfBazxcvf"; }
     static std::string Erase() { return "8asflakjbl;sdfDSslf"; }
 };
 
-// For strings the CityHash method is really fast and it gives better uniform
-// coverage of the hashed space.
+// For strings we can also use the CityHash64 hash functions. These aren't
+// really cryptographically secure, but they're super fast and give good
+// coverage of the hashed space. The 64-bit version plays nicely with our 64-bit
+// machine.
 struct CityHashFcn {
-    size_t operator()(const std::string &str) const {
+    inline size_t operator()(const std::string &str) const {
         return CityHash64(str.c_str(), str.size());
+    }
+};
+
+// For integer keys just use the maximum two values.
+template<typename T>
+struct IntegerKeys {
+    static T Empty() { return std::numeric_limits<T>::max(); }
+    static T Erase() { return std::numeric_limits<T>::max()-1; }
+};
+
+// This is just a hack to apply the hashing methods to integers. Here I don't
+// really want to do any hashing, so we can just use the identity integer
+// itself. For the moment this is easier than delving into the dense table
+// implementation.
+template<typename T>
+struct IdentityHash {
+    inline size_t operator()(const T &myint) const {
+        return myint;
     }
 };
 
@@ -177,7 +244,8 @@ template<class C>
 bp::class_<C> create_map_wrapper(const char* classname)
 {
     return create_container_wrapper<C>(classname)
-        .def("__iter__", bp::range(&C::begin, &C::end));
+        .def("__iter__", bp::range(&C::begin, &C::end))
+        .def("itervalues", bp::range(&C::begin_values, &C::end_values));
 }
 
 BOOST_PYTHON_MODULE(pyhashmap)
@@ -186,6 +254,7 @@ BOOST_PYTHON_MODULE(pyhashmap)
     bp::docstring_options doc(true, false);
 
     create_map_wrapper<pyhashmap<std::string, StringKeys, CityHashFcn> >("hashmap");
+    create_map_wrapper<pyhashmap<long, IntegerKeys<long>, IdentityHash<long> > >("table");
 
     create_container_wrapper<pysparsetable>("sparsetable")
         .def("itervalues", bp::range(&pysparsetable::begin_values, &pysparsetable::end_values));
