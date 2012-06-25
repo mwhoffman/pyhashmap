@@ -10,14 +10,14 @@ namespace bp = boost::python;
 namespace gg = google;
 
 //==============================================================================
-// pair_selector
+// pypair
 // A little helper type which defines functors to select the first and second
 // elements from a pair. So given a type T which has the same semantics as the
-// std::pair type, pair_selector<T>::first is a functor to select the first
+// std::pair type, pypair<T>::first is a functor to select the first
 // element (and vice-versa for ::second).
 
 template<typename T>
-struct pair_selector
+struct pypair
 {
     typedef T pair_type;
     typedef typename pair_type::first_type first_type;
@@ -36,6 +36,14 @@ struct pair_selector
     {
         const second_type& operator()(const pair_type& p) const {
             return p.second;
+        }
+    };
+
+    // functor to convert the pair into a python tuple.
+    struct to_tuple : std::unary_function<const pair_type&, bp::tuple>
+    {
+        bp::tuple operator()(const pair_type& p) const {
+            return bp::make_tuple(p.first, p.second);
         }
     };
 };
@@ -66,8 +74,9 @@ class pyhashmap
     typedef typename map_type::iterator iterator;
 
   private:
-    typedef typename pair_selector<value_type>::first select_key;
-    typedef typename pair_selector<value_type>::second select_val;
+    typedef typename pypair<value_type>::first select_key;
+    typedef typename pypair<value_type>::second select_val;
+    typedef typename pypair<value_type>::to_tuple to_tuple;
 
   public:
     pyhashmap(size_type n=0) : map(n) {
@@ -78,6 +87,7 @@ class pyhashmap
     // transform iterators to get keys, data, etc.
     typedef typename boost::transform_iterator<select_key, iterator> key_iterator;
     typedef typename boost::transform_iterator<select_val, iterator> val_iterator;
+    typedef typename boost::transform_iterator<to_tuple, iterator> item_iterator;
 
     // iterator over the keys.
     inline key_iterator begin() {
@@ -95,6 +105,15 @@ class pyhashmap
     
     inline val_iterator end_values() {
         return boost::make_transform_iterator(map.end(), select_val());
+    }
+
+    // iterator over the data.
+    inline item_iterator begin_item() {
+        return boost::make_transform_iterator(map.begin(), to_tuple());
+    }
+    
+    inline item_iterator end_item() {
+        return boost::make_transform_iterator(map.end(), to_tuple());
     }
 
     inline size_type len() const {
@@ -245,7 +264,8 @@ bp::class_<C> create_map_wrapper(const char* classname)
 {
     return create_container_wrapper<C>(classname)
         .def("__iter__", bp::range(&C::begin, &C::end))
-        .def("itervalues", bp::range(&C::begin_values, &C::end_values));
+        .def("itervalues", bp::range(&C::begin_values, &C::end_values))
+        .def("iteritems", bp::range(&C::begin_item, &C::end_item));
 }
 
 BOOST_PYTHON_MODULE(pyhashmap)
